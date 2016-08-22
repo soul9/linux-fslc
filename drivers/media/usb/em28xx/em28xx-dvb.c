@@ -53,6 +53,8 @@
 #include "mb86a20s.h"
 #include "m88ds3103.h"
 #include "m88ts2022.h"
+#include "si2168.h"
+#include "si2157.h"
 
 MODULE_AUTHOR("Mauro Carvalho Chehab <mchehab@infradead.org>");
 MODULE_LICENSE("GPL");
@@ -91,6 +93,7 @@ struct em28xx_dvb {
 	struct semaphore      pll_mutex;
 	bool			dont_attach_fe1;
 	int			lna_gpio;
+	struct i2c_client	*i2c_client_demod;
 	struct i2c_client	*i2c_client_tuner;
 };
 
@@ -717,6 +720,21 @@ static int em28xx_pctv_290e_set_lna(struct dvb_frontend *fe)
 			KBUILD_MODNAME, c->lna);
 	return 0;
 #endif
+}
+
+static int em28xx_pctv_292e_set_lna(struct dvb_frontend *fe)
+{
+	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
+	struct em28xx_i2c_bus *i2c_bus = fe->dvb->priv;
+	struct em28xx *dev = i2c_bus->dev;
+	u8 lna;
+
+	if (c->lna == 1)
+		lna = 0x01;
+	else
+		lna = 0x00;
+
+	return em28xx_write_reg_bits(dev, EM2874_R80_GPIO_P0_CTRL, lna, 0x01);
 }
 
 static int em28xx_mt352_terratec_xs_init(struct dvb_frontend *fe)
@@ -1413,6 +1431,66 @@ static int em28xx_dvb_init(struct em28xx *dev)
 			}
 		}
 		break;
+	case EM28178_BOARD_PCTV_292E:
+		{
+			struct i2c_adapter *adapter;
+			struct i2c_client *client;
+			struct i2c_board_info info;
+			struct si2168_config si2168_config;
+			struct si2157_config si2157_config;
+
+			/* attach demod */
+			memset(&si2168_config, 0, sizeof(si2168_config));
+			si2168_config.i2c_adapter = &adapter;
+			si2168_config.fe = &dvb->fe[0];
+			si2168_config.ts_mode = SI2168_TS_PARALLEL;
+			memset(&info, 0, sizeof(struct i2c_board_info));
+			strlcpy(info.type, "si2168", I2C_NAME_SIZE);
+			info.addr = 0x64;
+			info.platform_data = &si2168_config;
+			request_module(info.type);
+			client = i2c_new_device(&dev->i2c_adap[dev->def_i2c_bus], &info);
+			if (client == NULL || client->dev.driver == NULL) {
+				result = -ENODEV;
+				goto out_free;
+			}
+
+			if (!try_module_get(client->dev.driver->owner)) {
+				i2c_unregister_device(client);
+				result = -ENODEV;
+				goto out_free;
+			}
+
+			dvb->i2c_client_demod = client;
+
+			/* attach tuner */
+			memset(&si2157_config, 0, sizeof(si2157_config));
+			si2157_config.fe = dvb->fe[0];
+			memset(&info, 0, sizeof(struct i2c_board_info));
+			strlcpy(info.type, "si2157", I2C_NAME_SIZE);
+			info.addr = 0x60;
+			info.platform_data = &si2157_config;
+			request_module(info.type);
+			client = i2c_new_device(adapter, &info);
+			if (client == NULL || client->dev.driver == NULL) {
+				module_put(dvb->i2c_client_demod->dev.driver->owner);
+				i2c_unregister_device(dvb->i2c_client_demod);
+				result = -ENODEV;
+				goto out_free;
+			}
+
+			if (!try_module_get(client->dev.driver->owner)) {
+				i2c_unregister_device(client);
+				module_put(dvb->i2c_client_demod->dev.driver->owner);
+				i2c_unregister_device(dvb->i2c_client_demod);
+				result = -ENODEV;
+				goto out_free;
+			}
+
+			dvb->i2c_client_tuner = client;
+			dvb->fe[0]->ops.set_lna = em28xx_pctv_292e_set_lna;
+		}
+		break;
 	default:
 		em28xx_errdev("/2: The frontend of your DVB/ATSC card"
 				" isn't supported yet\n");
@@ -1485,6 +1563,10 @@ static int em28xx_dvb_fini(struct em28xx *dev)
 		}
 
 		i2c_release_client(dvb->i2c_client_tuner);
+		/* remove I2C demod */
+		if (dvb->i2c_client_demod) {
+			i2c_unregister_device(dvb->i2c_client_demod);
+		}
 		em28xx_unregister_dvb(dvb);
 		kfree(dvb);
 		dev->dvb = NULL;
