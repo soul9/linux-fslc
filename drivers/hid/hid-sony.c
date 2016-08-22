@@ -1170,6 +1170,9 @@ static const struct hid_device_id sony_devices[] = {
 		.driver_data = DUALSHOCK4_CONTROLLER_USB },
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_SONY, USB_DEVICE_ID_SONY_PS4_CONTROLLER),
 		.driver_data = DUALSHOCK4_CONTROLLER_BT },
+	/* SMK-Link Universal Remote Control VP3700 */
+	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_SMK, USB_DEVICE_ID_SONY_PS3_BDREMOTE),
+		.driver_data = PS3REMOTE },
 	{ }
 };
 MODULE_DEVICE_TABLE(hid, sony_devices);
