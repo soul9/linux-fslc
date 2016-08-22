@@ -804,6 +804,7 @@ int __init early_init_dt_scan_chosen(unsigned long node, const char *uname,
 {
 	unsigned long l;
 	char *p;
+	char tmp_command_line[COMMAND_LINE_SIZE] = CONFIG_CMDLINE;
 
 	pr_debug("search \"chosen\", depth: %d, uname: %s\n", depth, uname);
 
@@ -822,12 +823,23 @@ int __init early_init_dt_scan_chosen(unsigned long node, const char *uname,
 	 * CONFIG_CMDLINE is meant to be a default in case nothing else
 	 * managed to set the command line, unless CONFIG_CMDLINE_FORCE
 	 * is set in which case we override whatever was found earlier.
+	 *
+	 * But we do prepend CONFIG_CMDLINE to bootloader arguments anyway.
 	 */
 #ifdef CONFIG_CMDLINE
 #ifndef CONFIG_CMDLINE_FORCE
 	if (!((char *)data)[0])
-#endif
 		strlcpy(data, CONFIG_CMDLINE, COMMAND_LINE_SIZE);
+	else {
+		/* append bootloader arguments to CONFIG_CMDLINE */
+		strlcat(tmp_command_line, " ", COMMAND_LINE_SIZE);
+		strlcat(tmp_command_line, data, COMMAND_LINE_SIZE);
+		/* copy everything back */
+		strlcpy(data, tmp_command_line, COMMAND_LINE_SIZE);		
+	}
+#else
+	strlcpy(data, CONFIG_CMDLINE, COMMAND_LINE_SIZE);
+#endif /* CONFIG_CMDLINE_FORCE */
 #endif /* CONFIG_CMDLINE */
 
 	pr_debug("Command line is: %s\n", (char*)data);
